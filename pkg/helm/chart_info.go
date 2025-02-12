@@ -2,12 +2,12 @@ package helm
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 
 	log "github.com/sirupsen/logrus"
@@ -45,14 +45,25 @@ type ChartMeta struct {
 }
 
 type ChartRequirementsItem struct {
-	Name       string
-	Version    string
-	Repository string
-	Alias      string
+	Name          string
+	Version       string
+	Repository    string
+	Alias         string
+	LockedVersion string
 }
 
 type ChartRequirements struct {
 	Dependencies []ChartRequirementsItem
+}
+
+type ChartLockInfo struct {
+	Dependencies []struct {
+		Name       string `yaml:"name"`
+		Repository string `yaml:"repository"`
+		Version    string `yaml:"version"`
+	} `yaml:"dependencies"`
+	Digest    string `yaml:"digest"`
+	Generated string `yaml:"generated"`
 }
 
 type ChartValueDescription struct {
@@ -118,9 +129,9 @@ func parseChartFile(chartDirectory string) (ChartMeta, error) {
 	return chartMeta, err
 }
 
-func requirementKey(requirement ChartRequirementsItem) string {
-	return fmt.Sprintf("%s/%s", requirement.Repository, requirement.Name)
-}
+// func requirementKey(requirement ChartRequirementsItem) string {
+// 	return fmt.Sprintf("%s/%s", requirement.Repository, requirement.Name)
+// }
 
 func parseChartRequirementsFile(chartDirectory string, apiVersion string) (ChartRequirements, error) {
 	var requirementsPath string
@@ -147,11 +158,39 @@ func parseChartRequirementsFile(chartDirectory string, apiVersion string) (Chart
 		return chartRequirements, err
 	}
 
-	sort.Slice(chartRequirements.Dependencies[:], func(i, j int) bool {
-		return requirementKey(chartRequirements.Dependencies[i]) < requirementKey(chartRequirements.Dependencies[j])
-	})
+	// sort.Slice(chartRequirements.Dependencies[:], func(i, j int) bool {
+	// 	return requirementKey(chartRequirements.Dependencies[i]) < requirementKey(chartRequirements.Dependencies[j])
+	// })
 
 	return chartRequirements, nil
+}
+
+func parseChartLockRequirements(requirements ChartRequirements, chartDirectory string, apiVersion string) (ChartRequirements, error) {
+	if apiVersion == "v1" {
+		return requirements, nil
+	}
+
+	lockFilePath := filepath.Join(chartDirectory, "Chart.lock")
+	lockedRequirements := &ChartLockInfo{}
+	yamlFileContents, err := getYamlFileContents(lockFilePath)
+	if err != nil {
+		return requirements, err
+	}
+
+	err = yaml.Unmarshal(yamlFileContents, lockedRequirements)
+	if err != nil {
+		return requirements, err
+	}
+
+	if len(requirements.Dependencies) != len(lockedRequirements.Dependencies) {
+		return requirements, errors.New("length of Chart.yaml dependencies does not match Chart.lock dependencies")
+	}
+
+	for i := range requirements.Dependencies {
+		requirements.Dependencies[i].LockedVersion = lockedRequirements.Dependencies[i].Version
+	}
+
+	return requirements, nil
 }
 
 func removeIgnored(rootNode *yaml.Node, parentKind yaml.Kind) {
@@ -313,6 +352,11 @@ func ParseChartInformation(chartDirectory string, documentationParsingConfig Cha
 	}
 
 	chartDocInfo.ChartRequirements, err = parseChartRequirementsFile(chartDirectory, chartDocInfo.ApiVersion)
+	if err != nil {
+		return chartDocInfo, err
+	}
+
+	chartDocInfo.ChartRequirements, err = parseChartLockRequirements(chartDocInfo.ChartRequirements, chartDirectory, chartDocInfo.ApiVersion)
 	if err != nil {
 		return chartDocInfo, err
 	}

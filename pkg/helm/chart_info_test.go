@@ -1,19 +1,20 @@
 package helm_test
 
 import (
-	"github.com/norwoodj/helm-docs/pkg/helm"
-	"github.com/spf13/viper"
-	"github.com/stretchr/testify/suite"
 	"path/filepath"
 	"regexp"
 	"testing"
+
+	"github.com/norwoodj/helm-docs/pkg/helm"
+	"github.com/spf13/viper"
+	"github.com/stretchr/testify/suite"
 )
 
 type ChartParsingTestSuite struct {
 	suite.Suite
 }
 
-func (_ *ChartParsingTestSuite) SetupTest() {
+func (*ChartParsingTestSuite) SetupTest() {
 	viper.Set("values-file", "values.yaml")
 }
 
@@ -93,4 +94,19 @@ func (suite *ChartParsingTestSuite) TestFullyDocumentedChartStrictModeOn() {
 		StrictMode: true,
 	})
 	suite.NoError(err)
+}
+
+func (suite *ChartParsingTestSuite) TestFullFullTemplateChartLock() {
+	chartPath := filepath.Join("test-fixtures", "full-template")
+
+	want := helm.ChartRequirements{
+		Dependencies: []helm.ChartRequirementsItem{
+			{Name: "nginx-ingress", Version: "~2.0.0", Repository: "oci://ghcr.io/nginx/charts", Alias: "", LockedVersion: "2.0.1"},
+			{Name: "nginx-ingress", Version: "~1.0.0", Repository: "oci://ghcr.io/nginx/charts", Alias: "nginxA", LockedVersion: "1.0.2"},
+		},
+	}
+	info, err := helm.ParseChartInformation(chartPath, helm.ChartValuesDocumentationParsingConfig{})
+	suite.NoError(err)
+
+	suite.Equal(want, info.ChartRequirements)
 }
